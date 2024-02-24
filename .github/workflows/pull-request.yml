@@ -1,0 +1,126 @@
+name: Pull Request
+
+on:
+  pull_request:
+
+jobs:
+  unit_tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Unit Tests
+        run: echo 1
+  terraform_validate:
+    name: Terraform Validation
+    runs-on: ubuntu-latest
+    env:
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform.d/plugin-cache
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+        #   cli_config_credentials_token: ${{ secrets.TFE_TOKEN }}
+          terraform_version: ~> 1.5.6
+      - name: Configure Terraform Cache
+        run: mkdir -p $TF_PLUGIN_CACHE_DIR
+      - name: Terraform Cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: ${{ runner.os }}-terraform-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init
+        env:
+          REPO: ${{ github.repository }}
+      - name: Run Terraform Validate
+        working-directory: terraform
+        run: terraform validate
+      - name: Run Terraform Format
+        working-directory: terraform
+        run: terraform fmt -check -recursive
+  build:
+    name: Build Artifacts
+    needs: unit_tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: false
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+          cache: 'npm'
+    #   - name: Rewrite Git Config URLs
+    #     run: |
+    #       git config --global --add url."https://${{ secrets.APPLICATION_ACCESS_TOKEN }}@github.com/".insteadOf git+ssh://git@github.com/
+    #       git config --global --add url."https://${{ secrets.APPLICATION_ACCESS_TOKEN }}@github.com/".insteadOf ssh://git@github.com/
+    #       git config --global --add url."https://${{ secrets.APPLICATION_ACCESS_TOKEN }}@github.com/".insteadOf git@github.com:
+    #       git config --global --add url."https://${{ secrets.APPLICATION_ACCESS_TOKEN }}@github.com/".insteadOf git://
+    #       git config --global -l
+      - name: Install dependencies
+        run: |
+          npm install
+      - name: Build project
+        run: |
+          npm run build
+    #   - name: Archive Artifacts
+    #     run: tar -czvf build.tar.gz packages/vlab-api/bundle packages/vlab-web/out/environments packages/vlab-web-global-proctor/out/environments packages/workers/dynamodb-streams-processor/bundle packages/workers/sf-result-listener/bundle packages/workers/diagnostic-result-listener/bundle
+    #     shell: bash
+    #   - name: Upload Artifacts Archive
+    #     uses: actions/upload-artifact@v3
+    #     with:
+    #       name: build
+    #       path: build.tar.gz
+  terraform_development:
+    name: Terraform Plan - Development
+    environment: development
+    needs: [terraform_validate, terraform_security, build]
+    runs-on: ubuntu-latest
+    env:
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform.d/plugin-cache
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          cli_config_credentials_token: ${{ secrets.TFE_TOKEN }}
+          terraform_version: ~> 1.5.6
+      - name: Configure Terraform Cache
+        run: mkdir -p $TF_PLUGIN_CACHE_DIR
+      - name: Terraform Cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: ${{ runner.os }}-terraform-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: build
+      - name: Extract Build Artifacts
+        run: tar -xzvf build.tar.gz -C terraform/
+        shell: bash
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          parts=(${REPO//\// })
+          export TF_WORKSPACE=${parts[1]}-development
+          echo "TF_WORKSPACE=$TF_WORKSPACE" >> "$GITHUB_ENV"
+          terraform init
+        env:
+          REPO: ${{ github.repository }}
+      - name: Terraform Plan
+        working-directory: terraform
+        run: terraform plan -var-file terraform.development.tfvars
+        env:
+          TF_VAR_aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
