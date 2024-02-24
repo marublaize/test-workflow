@@ -4,6 +4,9 @@ metadata:
   name: test-workflow
   annotations:
     github.com/project-slug: marublaize/test-workflow
+    backstage.io/techdocs-ref: dir:.
+    backstage.io/managed-by-location: url:http://github.com/marublaize/test-workflow/blob/master/catalog-info.yaml
+    backstage.io/source-location: url:https://github.com/marublaize/test-workflow/
 spec:
   type: other
   lifecycle: unknown
